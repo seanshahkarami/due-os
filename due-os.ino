@@ -5,6 +5,7 @@
 volatile uint32_t *ICSR = (uint32_t *)0xe000ed04;
 
 struct Task {
+  uint32_t state;
   uint32_t *sp;
 };
 
@@ -15,6 +16,14 @@ int maxtasks = 3;
 static inline void yieldTask() {
   // Trigger PendSV interrupt which handles actual context switch.
   *ICSR = 1 << 28;
+}
+
+void sleep(uint32_t duration) {
+  uint32_t start = millis();
+
+  while (millis() - start < duration) {
+    yieldTask();
+  }
 }
 
 // Q - does returning from exception automatically restore the "hardware" stack? r0,r...
@@ -56,16 +65,18 @@ __attribute__((naked)) void PendSV_Handler() {
 void task1() {
   for (;;) {
     SerialUSB.println("hello from task1");
-    delay(1000);
-    yieldTask();
+    sleep(1000);
   }
 }
 
 void task2() {
-  for (int i = 0; i < 3; i++) {
-    SerialUSB.println("hello from task2");
-    delay(1000);
-    yieldTask();
+  pinMode(13, OUTPUT);
+
+  for (;;) {
+    digitalWrite(13, HIGH);
+    sleep(100);
+    digitalWrite(13, LOW);
+    sleep(100);
   }
 }
 
@@ -103,6 +114,7 @@ void setupTask(Task *task, uint32_t *sp, void (*func)()) {
   *(--sp) = 4;
 
   task->sp = sp;
+  task->state = 1;
 }
 
 uint32_t stack1[128];
@@ -110,12 +122,13 @@ uint32_t stack2[128];
 
 void setup() {
   SerialUSB.begin(0);
+  
+  // task 0 is the entry task - already correctly setup.
   setupTask(&tasks[1], &stack1[128], task1);
   setupTask(&tasks[2], &stack2[128], task2);
 }
 
 void loop() {
   SerialUSB.println("hello from loop");
-  delay(1000);
-  yieldTask();
+  sleep(3000);
 }
