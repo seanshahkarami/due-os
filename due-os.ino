@@ -26,7 +26,6 @@ void sleep(uint32_t duration) {
   }
 }
 
-// Q - does returning from exception automatically restore the "hardware" stack? r0,r...
 __attribute__((naked)) void PendSV_Handler() {
   // save context
   asm volatile(
