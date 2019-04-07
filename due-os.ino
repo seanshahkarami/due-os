@@ -175,16 +175,22 @@ void showProcesses() {
   }
 }
 
+void showUptime() {
+  SerialUSB.print(millis());
+  SerialUSB.println(" ms");
+}
+
 struct Command {
   const char *name;
   void (*func)();
 };
 
-const int numcommands = 1;
-
-Command commands[numcommands] = {
+Command commands[] = {
     {"ps", showProcesses},
+    {"uptime", showUptime},
 };
+
+const int numcommands = sizeof(commands) / sizeof(Command);
 
 void processCommand(const char *buf) {
   if (strlen(buf) == 0) {
