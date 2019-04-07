@@ -39,8 +39,14 @@ __attribute__((naked)) void PendSV_Handler() {
     "mrs %0, msp" : "=r"(tasks[curtask].sp)
   );
 
-  // select next task
-  curtask = (curtask + 1) % maxtasks;
+  // select next task - will run forever if no task available
+  for (;;) {
+    curtask = (curtask + 1) % maxtasks;
+
+    if (tasks[curtask].state == 1) {
+      break;
+    }
+  }
 
   // load sp for new task
   asm volatile(
@@ -64,14 +70,14 @@ __attribute__((naked)) void PendSV_Handler() {
 void task1() {
   for (;;) {
     SerialUSB.println("hello from task1");
-    sleep(1000);
+    sleep(10000);
   }
 }
 
 void task2() {
   pinMode(13, OUTPUT);
 
-  for (;;) {
+  for (int i = 0; i < 1000; i++) {
     digitalWrite(13, HIGH);
     sleep(100);
     digitalWrite(13, LOW);
@@ -79,13 +85,9 @@ void task2() {
   }
 }
 
-void taskdone() {
-  SerialUSB.println("task done!");
-  // should cleanup and remove task from list!
-
-  for (;;) {
-    yieldTask();
-  }
+void cleanupTask() {
+  tasks[curtask].state = 0;
+  yieldTask();
 }
 
 // NOTE Should be able to implement in just the standard pendSV handler???
@@ -93,10 +95,10 @@ void taskdone() {
 
 void setupTask(Task *task, uint32_t *sp, void (*func)()) {
   // hardware / exception frame
-  *(--sp) = 0x21000000;          // psr init state
-  *(--sp) = (uint32_t)func;      // pc
-  *(--sp) = (uint32_t)taskdone;  // lr
-  *(--sp) = 12;                  // r12
+  *(--sp) = 0x21000000;             // psr init state
+  *(--sp) = (uint32_t)func;         // pc
+  *(--sp) = (uint32_t)cleanupTask;  // lr
+  *(--sp) = 12;                     // r12
   *(--sp) = 3;
   *(--sp) = 2;
   *(--sp) = 1;
@@ -123,11 +125,85 @@ void setup() {
   SerialUSB.begin(0);
   
   // task 0 is the entry task - already correctly setup.
+  tasks[0].state = 1;
+
   setupTask(&tasks[1], &stack1[128], task1);
   setupTask(&tasks[2], &stack2[128], task2);
 }
 
+void readInput(const char *prompt, char *buf, int maxlen) {
+  int len = 0;
+
+  SerialUSB.print(prompt);
+
+  for (;;) {
+    while (SerialUSB.available() == 0) {
+      yieldTask();
+    }
+
+    int c = SerialUSB.read();
+
+    // echo character
+    SerialUSB.print((char)c);
+
+    if (c == '\n' || c == '\r') {
+      SerialUSB.println();
+      break;
+    }
+
+    if (len < maxlen-1) {
+      buf[len++] = c;
+    }
+  }
+
+  buf[len] = 0;
+}
+
+void showProcesses() {
+  for (int i = 0; i < maxtasks; i++) {
+    SerialUSB.print("task ");
+    SerialUSB.print(i);
+    SerialUSB.print(" ");
+
+    if (tasks[i].state == 1) {
+      SerialUSB.print("running");
+    } else {
+      SerialUSB.print("stopped");
+    }
+
+    SerialUSB.println();
+  }
+}
+
+struct Command {
+  const char *name;
+  void (*func)();
+};
+
+const int numcommands = 1;
+
+Command commands[numcommands] = {
+    {"ps", showProcesses},
+};
+
+void processCommand(const char *buf) {
+  if (strlen(buf) == 0) {
+    return;
+  }
+
+  for (int i = 0; i < numcommands; i++) {
+    if (strcmp(buf, commands[i].name) == 0) {
+      commands[i].func();
+      return;
+    }
+  }
+  
+  SerialUSB.print("? ");
+  SerialUSB.println(buf);
+}
+
 void loop() {
-  SerialUSB.println("hello from loop");
-  sleep(3000);
+  char buf[256];
+  readInput("$ ", buf, 256);
+  processCommand(buf);
 }
