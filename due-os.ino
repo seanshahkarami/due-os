@@ -9,9 +9,10 @@ struct Task {
   uint32_t *sp;
 };
 
-Task tasks[3];
+const int maxtasks = 10;
+uint32_t taskStacks[maxtasks][128];
+Task tasks[maxtasks];
 int curtask = 0;
-int maxtasks = 3;
 
 static inline void yieldTask() {
   // Trigger PendSV interrupt which handles actual context switch.
@@ -25,6 +26,8 @@ void sleep(uint32_t duration) {
     yieldTask();
   }
 }
+
+// can we remove the extra msr / mrs?
 
 __attribute__((naked)) void PendSV_Handler() {
   // save context
@@ -69,8 +72,12 @@ __attribute__((naked)) void PendSV_Handler() {
 
 void task1() {
   for (;;) {
-    SerialUSB.println("hello from task1");
-    sleep(10000);
+    SerialUSB.println("hello from task1 - step 1 of 3");
+    sleep(5000);
+    SerialUSB.println("hello from task1 - step 2 of 3");
+    sleep(5000);
+    SerialUSB.println("hello from task1 - step 3 of 3");
+    sleep(5000);
   }
 }
 
@@ -92,6 +99,17 @@ void cleanupTask() {
 
 // NOTE Should be able to implement in just the standard pendSV handler???
 // We basically store the state of the inner call anyway, so it gets fixed
+
+void setupScheduler() {
+  for (int i = 0; i < maxtasks; i++) {
+    tasks[i].state = 0;
+    tasks[i].sp = 0;
+  }
+
+  // task 0 is the "main" task, so we mark it as running.
+  tasks[0].state = 1;
+  curtask = 0;
+}
 
 void setupTask(Task *task, uint32_t *sp, void (*func)()) {
   // hardware / exception frame
@@ -118,17 +136,25 @@ void setupTask(Task *task, uint32_t *sp, void (*func)()) {
   task->state = 1;
 }
 
-uint32_t stack1[128];
-uint32_t stack2[128];
+int runTask(void (*func)()){
+    for (int i = 0; i < maxtasks; i++) {
+      if (tasks[i].state == 0) {
+        Task *task = &tasks[i];
+        uint32_t *sp = &taskStacks[i][128];
+        setupTask(task, sp, func);
+        return 0;
+      }
+    }
+
+    return -1;
+}
 
 void setup() {
   SerialUSB.begin(0);
-  
-  // task 0 is the entry task - already correctly setup.
-  tasks[0].state = 1;
 
-  setupTask(&tasks[1], &stack1[128], task1);
-  setupTask(&tasks[2], &stack2[128], task2);
+  setupScheduler();
+  runTask(task1);
+  runTask(task2);
 }
 
 void readInput(const char *prompt, char *buf, int maxlen) {
@@ -160,24 +186,35 @@ void readInput(const char *prompt, char *buf, int maxlen) {
 }
 
 void showProcesses() {
+  SerialUSB.print("running");
+
   for (int i = 0; i < maxtasks; i++) {
-    SerialUSB.print("task ");
-    SerialUSB.print(i);
-    SerialUSB.print(" ");
-
     if (tasks[i].state == 1) {
-      SerialUSB.print("running");
-    } else {
-      SerialUSB.print("stopped");
+      SerialUSB.print(" ");
+      SerialUSB.print(i);
     }
-
-    SerialUSB.println();
   }
+
+  SerialUSB.println();
 }
 
 void showUptime() {
   SerialUSB.print(millis());
   SerialUSB.println(" ms");
+}
+
+void spawnTask() {
+  for (int i = 0; i < 10; i++) {
+    sleep(1000);
+    SerialUSB.print("bg task ");
+    SerialUSB.println(i);
+  }
+}
+
+void spawnExample() {
+  if (runTask(spawnTask) == -1) {
+    SerialUSB.println("error: cannot run task");
+  }
 }
 
 struct Command {
@@ -188,6 +225,7 @@ struct Command {
 Command commands[] = {
     {"ps", showProcesses},
     {"uptime", showUptime},
+    {"spawn", spawnExample},
 };
 
 const int numcommands = sizeof(commands) / sizeof(Command);
